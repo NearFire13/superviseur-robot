@@ -64,6 +64,8 @@ private:
     /**********************************************************************/
     ComMonitor monitor;
     ComRobot robot;
+    Camera* camera;
+    Arena arena;
     int robotStarted = 0;
     int move = MESSAGE_ROBOT_STOP;
     
@@ -77,6 +79,11 @@ private:
     RT_TASK th_startRobot;
     RT_TASK th_move;
     RT_TASK th_battery;
+    RT_TASK th_openCamera;
+    RT_TASK th_grabImage;
+    RT_TASK th_closeCamera;
+    RT_TASK th_findArena;
+    RT_TASK th_getRobotPosition;
     
     /**********************************************************************/
     /* Mutex                                                              */
@@ -85,6 +92,8 @@ private:
     RT_MUTEX mutex_robot;
     RT_MUTEX mutex_robotStarted;
     RT_MUTEX mutex_move;
+    RT_MUTEX mutex_camera;
+    RT_MUTEX mutex_arena;
 
     /**********************************************************************/
     /* Semaphores                                                         */
@@ -94,6 +103,10 @@ private:
     RT_SEM sem_serverOk;
     RT_SEM sem_startRobot;
     RT_SEM sem_battery;
+    RT_SEM sem_openCamera;
+    RT_SEM sem_closeCamera;
+    RT_SEM sem_arena;
+    RT_SEM sem_testArena;
 
     /**********************************************************************/
     /* Message queues                                                     */
@@ -152,6 +165,17 @@ private:
     Message *ReadInQueue(RT_QUEUE *queue);
     
     void Battery(void *arg);
+    
+    void OpenCamera(void *arg);
+    
+    void GrabImage(void *arg);
+    
+    void CloseCamera(void *arg);
+    
+    void FindArena(void *arg);
+    
+    //void GetRobotPosition(void *arg);
+    
 
 };
 
