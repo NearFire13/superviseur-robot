@@ -31,7 +31,8 @@
 #define PRIORITY_TGRABIMAGE 17
 #define PRIORITY_TCLOSECAMERA 19
 #define PRIORITY_TFINDARENA 18
-//#define PRIORITY_TGETROBOTPOSITION 19
+#define PRIORITY_TGETROBOTPOSITION 19
+#define PRIORITY_COUNTER 20
 
 /*
  * Some remarks:
@@ -110,6 +111,10 @@ void Tasks::Init() {
         cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }
+    if (err = rt_sem_create(&sem_startRobotWD, NULL, 0, S_FIFO)) {
+        cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }
     if (err = rt_sem_create(&sem_battery, NULL, 0, S_FIFO)) {
         cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
@@ -130,6 +135,15 @@ void Tasks::Init() {
         cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }
+    if (err = rt_sem_create(&sem_position, NULL, 0, S_FIFO)) {
+        cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }
+    if (err = rt_sem_create(&sem_counter, NULL, 0, S_FIFO)) {
+        cerr << "Error semaphore create: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }
+    
     cout << "Semaphores created successfully" << endl << flush;
 
     /**************************************************************************************/
@@ -159,6 +173,10 @@ void Tasks::Init() {
         cerr << "Error task create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }
+    if (err = rt_task_create(&th_startRobotWD, "th_startRobotWD", 0, PRIORITY_TSTARTROBOT, 0)) {
+        cerr << "Error task create: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }
     if (err = rt_task_create(&th_battery, "th_battery", 0, PRIORITY_TBATTERY, 0)) {
         cerr << "Error task create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
@@ -180,11 +198,16 @@ void Tasks::Init() {
         cerr << "Error task create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }
-    /*if (err = rt_task_create(&th_getRobotPosition, "th_getRobotPosition", 0, PRIORITY_TGETROBOTPOSITION, 0))
+    if (err = rt_task_create(&th_getRobotPosition, "th_getRobotPosition", 0, PRIORITY_TGETROBOTPOSITION, 0))
     {
         cerr << "Error task create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
-    }*/
+    }
+    if (err = rt_task_create(&th_counter, "th_counter", 0, PRIORITY_COUNTER, 0))
+    {
+        cerr << "Error task create: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }
     
     cout << "Tasks created successfully" << endl << flush;
 
@@ -195,6 +218,7 @@ void Tasks::Init() {
         cerr << "Error msg queue create: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
     }
+    
     cout << "Queues created successfully" << endl << flush;
 
 }
@@ -231,6 +255,11 @@ void Tasks::Run() {
         exit(EXIT_FAILURE);
     }
     
+    if (err = rt_task_start(&th_startRobotWD, (void(*)(void*)) & Tasks::StartRobotTaskWD, this)) {
+        cerr << "Error task start: " << strerror(-err) << endl << flush;
+        exit(EXIT_FAILURE);
+    }
+    
     if (err = rt_task_start(&th_battery, (void(*)(void*)) & Tasks::Battery, this)) {
         cerr << "Error task start: " << strerror(-err) << endl << flush;
         exit(EXIT_FAILURE);
@@ -256,10 +285,16 @@ void Tasks::Run() {
          exit(EXIT_FAILURE);
     }
     
-    /*if (err = rt_task_start(&th_getRobotPosition, (void(*)(void*)) & Tasks::GetRobotPosition, this)) {
+    if (err = rt_task_start(&th_getRobotPosition, (void(*)(void*)) & Tasks::GetRobotPosition, this)) {
         cerr << "Error task start: " << strerror(-err) << endl << flush;
          exit(EXIT_FAILURE);
-    }*/
+    }
+    
+    if (err = rt_task_start(&th_counter, (void(*)(void*)) & Tasks::Counter, this)) {
+        cerr << "Error task start: " << strerror(-err) << endl << flush;
+         exit(EXIT_FAILURE);
+    }
+    
     cout << "Tasks launched" << endl << flush;
 }
 
@@ -336,7 +371,6 @@ void Tasks::SendToMonTask(void* arg) {
  */
 void Tasks::ReceiveFromMonTask(void *arg) {
     Message *msgRcv;
-    //rt_task_set_priority(NULL, T_LOPRIO);
     int err;
     
     cout << "Start " << __PRETTY_FUNCTION__ << endl << flush;
@@ -352,48 +386,76 @@ void Tasks::ReceiveFromMonTask(void *arg) {
     while (1) {
         msgRcv = monitor.Read();
         cout << "Rcv <= " << msgRcv->ToString() << endl << flush;
+        
+        if  (msgRcv->CompareID(MESSAGE_ANSWER_COM_ERROR) || msgRcv->CompareID(MESSAGE_ANSWER_ROBOT_TIMEOUT))
+        {
+            rt_sem_v(&sem_counter);
+        }
+        else
+        {
+            if (msgRcv->CompareID(MESSAGE_MONITOR_LOST)) {
+                robot.Stop();
+                monitor.Close();
+                robot.Close();
+                rt_sem_v(&sem_closeCamera);
+                cout << "Monitor is lost" << endl << flush;
+                delete(msgRcv);
+                exit(-1);
+            } else if (msgRcv->CompareID(MESSAGE_ROBOT_COM_OPEN)) {
+                rt_sem_v(&sem_openComRobot);
+            } else if (msgRcv->CompareID(MESSAGE_ROBOT_START_WITHOUT_WD)) {
+                rt_sem_v(&sem_startRobot);
+            } else if (msgRcv->CompareID(MESSAGE_ROBOT_GO_FORWARD) ||
+                    msgRcv->CompareID(MESSAGE_ROBOT_GO_BACKWARD) ||
+                    msgRcv->CompareID(MESSAGE_ROBOT_GO_LEFT) ||
+                    msgRcv->CompareID(MESSAGE_ROBOT_GO_RIGHT) ||
+                    msgRcv->CompareID(MESSAGE_ROBOT_STOP)) {
 
-        if (msgRcv->CompareID(MESSAGE_MONITOR_LOST)) {
-            delete(msgRcv);
-            exit(-1);
-        } else if (msgRcv->CompareID(MESSAGE_ROBOT_COM_OPEN)) {
-            rt_sem_v(&sem_openComRobot);
-        } else if (msgRcv->CompareID(MESSAGE_ROBOT_START_WITHOUT_WD)) {
-            rt_sem_v(&sem_startRobot);
-        } else if (msgRcv->CompareID(MESSAGE_ROBOT_GO_FORWARD) ||
-                msgRcv->CompareID(MESSAGE_ROBOT_GO_BACKWARD) ||
-                msgRcv->CompareID(MESSAGE_ROBOT_GO_LEFT) ||
-                msgRcv->CompareID(MESSAGE_ROBOT_GO_RIGHT) ||
-                msgRcv->CompareID(MESSAGE_ROBOT_STOP)) {
-
-            rt_mutex_acquire(&mutex_move, TM_INFINITE);
-            move = msgRcv->GetID();
-            rt_mutex_release(&mutex_move);
-        }
-        else if (msgRcv->CompareID(MESSAGE_ROBOT_BATTERY_GET))
-        {
-            rt_sem_v(&sem_battery);
-        }
-        else if (msgRcv->CompareID(MESSAGE_CAM_OPEN))
-        {
-            rt_sem_v(&sem_openCamera);
-        }
-        else if (msgRcv->CompareID(MESSAGE_CAM_CLOSE))
-        {
-            rt_sem_v(&sem_closeCamera);
-        }
-        else if (msgRcv->CompareID(MESSAGE_CAM_ASK_ARENA))
-        {
-            rt_sem_v(&sem_arena);
-        }
-        else if (msgRcv->CompareID(MESSAGE_CAM_ARENA_CONFIRM))
-        {
-            rt_sem_v(&sem_testArena);
-        }
-        else if (msgRcv->CompareID(MESSAGE_CAM_ARENA_INFIRM))
-        {
-            arena = Arena();
-            rt_sem_v(&sem_testArena);
+                rt_mutex_acquire(&mutex_move, TM_INFINITE);
+                move = msgRcv->GetID();
+                rt_mutex_release(&mutex_move);
+            }
+            else if (msgRcv -> CompareID(MESSAGE_ROBOT_START_WITH_WD))
+            {
+                rt_sem_v(&sem_startRobotWD);
+            }
+            else if (msgRcv->CompareID(MESSAGE_ROBOT_START_WITHOUT_WD)) {
+                rt_sem_v(&sem_startRobot);
+            }
+            else if (msgRcv->CompareID(MESSAGE_ROBOT_BATTERY_GET))
+            {
+                rt_sem_v(&sem_battery);
+            }
+            else if (msgRcv->CompareID(MESSAGE_CAM_OPEN))
+            {
+                rt_sem_v(&sem_openCamera);
+            }
+            else if (msgRcv->CompareID(MESSAGE_CAM_CLOSE))
+            {
+                rt_sem_v(&sem_closeCamera);
+            }
+            else if (msgRcv->CompareID(MESSAGE_CAM_ASK_ARENA))
+            {
+                rt_sem_v(&sem_arena);
+            }
+            else if (msgRcv->CompareID(MESSAGE_CAM_ARENA_CONFIRM))
+            {
+                rt_sem_v(&sem_testArena);
+            }
+            else if (msgRcv->CompareID(MESSAGE_CAM_ARENA_INFIRM))
+            {
+                arena = Arena();
+                rt_sem_v(&sem_testArena);
+            }
+            else if (msgRcv->CompareID(MESSAGE_CAM_POSITION_COMPUTE_START))
+            {
+                rt_sem_v(&sem_position);
+            }
+            else if (msgRcv->CompareID(MESSAGE_CAM_POSITION_COMPUTE_STOP))
+            {
+                positionActivated = false;
+            }
+            counter = 0;
         }
         delete(msgRcv); // mus be deleted manually, no consumer
     }
@@ -461,6 +523,56 @@ void Tasks::StartRobotTask(void *arg) {
             rt_mutex_acquire(&mutex_robotStarted, TM_INFINITE);
             robotStarted = 1;
             rt_mutex_release(&mutex_robotStarted);
+        }
+    }
+}
+
+void Tasks::StartRobotTaskWD(void *arg) {
+    int rs;
+    cout << "Start " << __PRETTY_FUNCTION__ << endl << flush;
+    // Synchronization barrier (waiting that all tasks are starting)
+    rt_sem_p(&sem_barrier, TM_INFINITE);
+   
+    /**************************************************************************************/
+    /* The task startRobotWD starts here                                                    */
+    /**************************************************************************************/
+   
+    while (1) {
+       
+        Message * msgSend;
+        rt_sem_p(&sem_startRobotWD, TM_INFINITE);
+        cout << "Start robot with watchdog (" << endl << flush;
+        rt_mutex_acquire(&mutex_robot, TM_INFINITE);
+        msgSend = robot.Write(robot.StartWithWD());
+        rt_mutex_release(&mutex_robot);
+        cout << msgSend->GetID();
+        cout << ")" << endl;
+
+        cout << "Movement answer: " << msgSend->ToString() << endl << flush;
+        WriteInQueue(&q_messageToMon, msgSend);  // msgSend will be deleted by sendToMon
+
+
+        if (msgSend->GetID() == MESSAGE_ANSWER_ACK) {
+            rt_mutex_acquire(&mutex_robotStarted, TM_INFINITE);
+            robotStarted = 1;
+            rt_mutex_release(&mutex_robotStarted);
+            
+            rt_task_set_periodic(NULL, TM_NOW, 1000000000);
+ 
+            while (1) {
+                rt_task_wait_period(NULL);
+                rt_mutex_acquire(&mutex_robotStarted, TM_INFINITE);
+                rs = robotStarted;
+                rt_mutex_release(&mutex_robotStarted);
+                if(rs == 1){
+                    cout << "Periodic Reload wd update";
+                    rt_mutex_acquire(&mutex_robot, TM_INFINITE);
+                    robot.Write(robot.ReloadWD());
+                    robot.Stop();
+                    rt_mutex_release(&mutex_robot);
+                    cout << endl << flush;
+                }
+            }
         }
     }
 }
@@ -678,23 +790,61 @@ void Tasks::FindArena(void *arg)
     }
 }
 
-/*void Tasks::GetRobotPosition(void *arg)
+void Tasks::GetRobotPosition(void *arg)
+{
+    MessagePosition *msgPos;
+    rt_task_set_periodic(NULL, TM_NOW, 100000000);
+    while(1)
+    {
+        rt_sem_p(&sem_position, TM_INFINITE);
+        
+        rt_mutex_acquire(&mutex_camera, TM_INFINITE);
+        
+        positionActivated = true;
+        
+        while(positionActivated)
+        {
+            Img * img = new Img(camera->Grab());
+            std::list<Position>  positions = img->SearchRobot(arena);
+            if(positions.empty())
+            {
+                cout << "Positions Not Found" << endl << flush;
+            }
+            else
+            {
+                cout << "Positions Found" << endl << flush;
+            }
+
+            //if(last!=Position()){
+                img->DrawRobot(positions.front());
+
+                msgPos = new MessagePosition(MESSAGE_CAM_POSITION, positions.front());
+            //}
+            //else{
+              //  msgPos = new MessagePosition(MESSAGE_CAM_POSITION,Position());
+            //}
+            MessageImg *msgImg = new MessageImg(MESSAGE_CAM_IMAGE, img);
+            WriteInQueue(&q_messageToMon, msgImg);
+            WriteInQueue(&q_messageToMon, msgPos);
+            
+        }
+        
+        rt_mutex_release(&mutex_camera);
+    }
+    
+}
+
+void Tasks::Counter(void* arg)
 {
     while(1)
     {
-        Img * img = new Img(camera->Grab());
-        Position position = img->SearchRobot(arena);
-        
-        if(position != NULL)
+        rt_sem_p(&sem_counter, TM_INFINITE);
+
+        counter++;
+        if(counter >= 3)
         {
-            img->DrawRobot(position);
-            MessageImg *msgImg = new MessagePosition(MESSAGE_CAM_POSITION_COMPUTE_START, position);
-            WriteInQueue(&q_messageToMon, msgImg);
-        }
-        else
-        {
-            MessageImg *msgImg = new MessagePosition(MESSAGE_CAM_POSITION_COMPUTE_STOP, position);
-            WriteInQueue(&q_messageToMon, msgImg);
+            robot.Close();
+            cout << "Robot communication lost" << endl << flush;
         }
     }
-}*/
+}

@@ -67,6 +67,8 @@ private:
     Camera* camera;
     Arena arena;
     int robotStarted = 0;
+    int counter = 0;
+    bool positionActivated = false;
     int move = MESSAGE_ROBOT_STOP;
     
     /**********************************************************************/
@@ -77,6 +79,7 @@ private:
     RT_TASK th_receiveFromMon;
     RT_TASK th_openComRobot;
     RT_TASK th_startRobot;
+    RT_TASK th_startRobotWD;
     RT_TASK th_move;
     RT_TASK th_battery;
     RT_TASK th_openCamera;
@@ -84,6 +87,7 @@ private:
     RT_TASK th_closeCamera;
     RT_TASK th_findArena;
     RT_TASK th_getRobotPosition;
+    RT_TASK th_counter;
     
     /**********************************************************************/
     /* Mutex                                                              */
@@ -102,11 +106,14 @@ private:
     RT_SEM sem_openComRobot;
     RT_SEM sem_serverOk;
     RT_SEM sem_startRobot;
+    RT_SEM sem_startRobotWD;
     RT_SEM sem_battery;
     RT_SEM sem_openCamera;
     RT_SEM sem_closeCamera;
     RT_SEM sem_arena;
     RT_SEM sem_testArena;
+    RT_SEM sem_position;
+    RT_SEM sem_counter;
 
     /**********************************************************************/
     /* Message queues                                                     */
@@ -142,6 +149,8 @@ private:
      */
     void StartRobotTask(void *arg);
     
+    void StartRobotTaskWD(void *arg);
+    
     /**
      * @brief Thread handling control of the robot.
      */
@@ -174,7 +183,9 @@ private:
     
     void FindArena(void *arg);
     
-    //void GetRobotPosition(void *arg);
+    void GetRobotPosition(void *arg);
+    
+    void Counter(void* arg);
     
 
 };
