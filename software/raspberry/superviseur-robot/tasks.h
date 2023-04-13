@@ -87,7 +87,7 @@ private:
     RT_TASK th_closeCamera;
     RT_TASK th_findArena;
     RT_TASK th_getRobotPosition;
-    RT_TASK th_counter;
+   
     
     /**********************************************************************/
     /* Mutex                                                              */
@@ -113,8 +113,7 @@ private:
     RT_SEM sem_arena;
     RT_SEM sem_testArena;
     RT_SEM sem_position;
-    RT_SEM sem_counter;
-
+    
     /**********************************************************************/
     /* Message queues                                                     */
     /**********************************************************************/
@@ -185,8 +184,9 @@ private:
     
     void GetRobotPosition(void *arg);
     
-    void Counter(void* arg);
+    Message *  Counter(Message * msgSend);
     
+    int count = 0;
 
 };
 
